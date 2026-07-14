@@ -1,0 +1,14 @@
+# Tested with Python 3.13.13.
+#
+# OpenCV is the full package, not opencv-python-headless, because the dashboard
+# uses cv2.imshow/cv2.namedWindow for the live control display.
+numpy==2.5.0
+opencv-python==4.13.0.92
+
+# MAVLink/FCC transport.
+pymavlink==2.4.49
+pyserial==3.5
+
+# Explicit pymavlink runtime dependencies, pinned for reproducible installs.
+fastcrc==0.3.6
+lxml==6.1.1

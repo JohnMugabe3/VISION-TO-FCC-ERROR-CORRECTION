@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AI Aided Vision-to-FCC Error GPS Dive Correction Prototype</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  @page { size: A4; margin: 0; }
+  body { font-family:'Segoe UI','DejaVu Sans',Arial,sans-serif; color:#26333b; font-size:10.3pt; line-height:1.45; }
+  .page { width:210mm; height:296mm; padding:13mm 15mm 11mm; page-break-after:always; overflow:hidden; position:relative; }
+  .page:last-child { page-break-after:auto; }
+
+  .banner { background:linear-gradient(135deg,#0d4f5c 0%,#136b78 100%); color:#fff; border-radius:10px; padding:7mm 10mm 6mm; margin-bottom:4.5mm; }
+  .banner .kicker { font-size:8pt; letter-spacing:3px; color:#9fd4d6; margin-bottom:3mm; }
+  .banner h1 { font-size:19pt; line-height:1.2; letter-spacing:.5px; margin-bottom:3mm; }
+  .banner p { font-size:10pt; color:#d9eef0; max-width:165mm; }
+  .banner .meta { font-size:8.5pt; color:#9fd4d6; margin-top:3mm; }
+
+  h2 { font-size:13pt; color:#0d4f5c; margin:5mm 0 2.5mm; display:flex; align-items:center; gap:2.5mm; }
+  h2 .num { background:#0d4f5c; color:#fff; font-size:9.5pt; border-radius:4px; padding:.5mm 2.2mm; }
+  p { margin-bottom:2.2mm; }
+  b.k { color:#0d4f5c; }
+
+  table { width:100%; border-collapse:collapse; font-size:9pt; margin:2mm 0 3mm; }
+  th { background:#e8f2f3; color:#0d4f5c; text-align:left; padding:1.6mm 2.5mm; border:1px solid #cfe0e2; }
+  td { padding:1.2mm 2.5mm; border:1px solid #cfe0e2; vertical-align:top; }
+  code { background:#eef4f5; border:1px solid #d5e3e5; border-radius:3px; padding:0 1.2mm; font-family:'DejaVu Sans Mono',Consolas,monospace; font-size:8.5pt; color:#0d4f5c; }
+
+  .fig { text-align:center; margin:3mm 0; }
+  .figcap { font-size:8.3pt; color:#5b6b73; text-align:center; margin:1mm auto 3mm; max-width:170mm; }
+  .callout { border-left:3.5px solid #d97706; background:#fdf6ec; padding:2.5mm 3.5mm; border-radius:0 6px 6px 0; margin:3mm 0; font-size:9.5pt; }
+  .callout.green { border-color:#2f9e63; background:#eef8f1; }
+  .callout.teal { border-color:#136b78; background:#ecf5f6; }
+  .callout b { color:#8a4b04; } .callout.green b { color:#1d6b42; } .callout.teal b { color:#0d4f5c; }
+
+  ol.steps { margin:2mm 0 3mm 6mm; }
+  ol.steps li { margin-bottom:1.8mm; }
+  .footer { position:absolute; bottom:7mm; left:15mm; right:15mm; display:flex; justify-content:space-between; font-size:8pt; color:#7d8b92; border-top:1px solid #d8e2e5; padding-top:1.6mm; }
+  .twocol { display:flex; gap:5mm; align-items:flex-start; }
+  .twocol > div { flex:1; }
+</style>
+</head>
+<body>
+
+<!-- ================================================== PAGE 1 -->
+<div class="page">
+  <div class="banner">
+    <div class="kicker">TECHNICAL DEMONSTRATION REPORT</div>
+    <h1>AI AIDED VISION-TO-FCC ERROR<br>GPS DIVE CORRECTION PROTOTYPE</h1>
+    <p>How an onboard AI camera measures the aircraft's aiming error against a visual target and
+       reports it to the flight controller — so a GPS-guided dive can be corrected with information
+       GPS cannot provide.</p>
+    <div class="meta">July 2026 · Jetson companion computer + SIYI ZR10 gimbal camera + ArduPilot FCC (CubeOrange+)</div>
+  </div>
+
+  <p>GPS tells a UAV where <i>it</i> is; it cannot tell the UAV where the <i>target</i> is once the
+  target is a visual object below. In a GPS-guided dive the aircraft flies to a coordinate — any
+  error in that coordinate, or any target movement, goes uncorrected. This prototype adds the
+  missing feedback: an AI detector locks the target in the camera image, and the system answers one
+  question ten times per second — <b class="k">&ldquo;how far is the nose off the target, in degrees of yaw
+  and pitch?&rdquo;</b> That pair of numbers is exactly the correction the GPS dive needs, at any dive
+  angle from shallow to near-vertical (0–90°).</p>
+
+  <h2><span class="num">1</span> System setup and communications</h2>
+  <p>Three devices cooperate. The <b class="k">ZR10 gimbal camera</b> sees the target and keeps itself
+  pointed at it. The <b class="k">companion computer</b> runs the AI detection, steers the gimbal, and does
+  the angle mathematics. The <b class="k">flight controller (FCC)</b> supplies the aircraft's attitude and
+  receives the correction over MAVLink.</p>
+
+  <div class="fig">
+  <svg width="660" height="150" viewBox="0 0 660 150" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="ag" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#2f9e63"/></marker>
+      <marker id="at" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#136b78"/></marker>
+    </defs>
+    <!-- target -->
+    <circle cx="48" cy="75" r="17" fill="none" stroke="#d97706" stroke-width="2.5"/>
+    <circle cx="48" cy="75" r="8" fill="none" stroke="#d97706" stroke-width="2"/>
+    <circle cx="48" cy="75" r="2.5" fill="#d97706"/>
+    <text x="48" y="112" font-size="10" font-weight="bold" fill="#26333b" text-anchor="middle">TARGET</text>
+    <!-- line of sight -->
+    <line x1="70" y1="75" x2="128" y2="75" stroke="#d97706" stroke-width="1.6" stroke-dasharray="5,4"/>
+    <text x="99" y="66" font-size="8.5" fill="#d97706" text-anchor="middle">line of sight</text>
+    <!-- zr10 -->
+    <rect x="130" y="47" width="112" height="56" rx="7" fill="#fff" stroke="#136b78" stroke-width="1.6"/>
+    <text x="186" y="66" font-size="10.5" font-weight="bold" fill="#0d4f5c" text-anchor="middle">SIYI ZR10</text>
+    <text x="186" y="79" font-size="8.5" fill="#5b6b73" text-anchor="middle">gimbal camera</text>
+    <text x="186" y="91" font-size="8.5" fill="#5b6b73" text-anchor="middle">self-stabilizing</text>
+    <!-- links zr10-companion -->
+    <line x1="242" y1="56" x2="330" y2="56" stroke="#136b78" stroke-width="1.4" marker-end="url(#at)"/>
+    <text x="286" y="51" font-size="8" fill="#136b78" text-anchor="middle">video (RTSP)</text>
+    <line x1="242" y1="74" x2="330" y2="74" stroke="#136b78" stroke-width="1.4" marker-end="url(#at)"/>
+    <text x="286" y="69" font-size="8" fill="#136b78" text-anchor="middle">attitude (UDP)</text>
+    <line x1="330" y1="93" x2="242" y2="93" stroke="#2f9e63" stroke-width="1.4" marker-end="url(#ag)"/>
+    <text x="286" y="105" font-size="8" fill="#2f9e63" text-anchor="middle">steer gimbal</text>
+    <!-- companion -->
+    <rect x="332" y="42" width="130" height="66" rx="7" fill="#0d4f5c"/>
+    <text x="397" y="62" font-size="10.5" font-weight="bold" fill="#fff" text-anchor="middle">COMPANION</text>
+    <text x="397" y="75" font-size="10.5" font-weight="bold" fill="#fff" text-anchor="middle">COMPUTER</text>
+    <text x="397" y="90" font-size="8" fill="#9fd4d6" text-anchor="middle">AI detection · tracking</text>
+    <text x="397" y="101" font-size="8" fill="#9fd4d6" text-anchor="middle">error math · dashboard</text>
+    <!-- links companion-fcc -->
+    <line x1="546" y1="58" x2="464" y2="58" stroke="#136b78" stroke-width="1.4" marker-end="url(#at)"/>
+    <text x="505" y="53" font-size="8" fill="#136b78" text-anchor="middle">ATTITUDE</text>
+    <line x1="464" y1="90" x2="546" y2="90" stroke="#2f9e63" stroke-width="2" marker-end="url(#ag)"/>
+    <text x="505" y="103" font-size="8" font-weight="bold" fill="#2f9e63" text-anchor="middle">VIS_ERR 10 Hz</text>
+    <!-- fcc -->
+    <rect x="548" y="47" width="100" height="56" rx="7" fill="#fff" stroke="#136b78" stroke-width="1.6"/>
+    <text x="598" y="67" font-size="10.5" font-weight="bold" fill="#0d4f5c" text-anchor="middle">FCC</text>
+    <text x="598" y="80" font-size="8.5" fill="#5b6b73" text-anchor="middle">flight controller</text>
+    <text x="598" y="92" font-size="8.5" fill="#5b6b73" text-anchor="middle">ArduPilot · GPS dive</text>
+  </svg>
+  </div>
+  <div class="figcap">Fig. 1 — Setup and data links. Serial MAVLink carries the aircraft attitude in and the vision
+  correction (<code>DEBUG_VECT "VIS_ERR"</code>) out; the FCC forwards telemetry to any ground station.</div>
+
+  <table>
+    <tr><th style="width:34mm">Link</th><th style="width:34mm">Transport</th><th>Content</th><th style="width:16mm">Rate</th></tr>
+    <tr><td>Camera → Companion</td><td>RTSP over Ethernet</td><td>Live video, 1280×720</td><td>stream</td></tr>
+    <tr><td>Gimbal ↔ Companion</td><td>SIYI SDK over UDP</td><td>Gimbal attitude in; steering rates out</td><td>10 Hz</td></tr>
+    <tr><td>FCC → Companion</td><td>MAVLink, serial</td><td><code>ATTITUDE</code>, <code>HEARTBEAT</code></td><td>stream</td></tr>
+    <tr><td>Companion → FCC</td><td>MAVLink, serial</td><td><code>DEBUG_VECT "VIS_ERR"</code>: x = yaw error, y = pitch error (deg)</td><td>10 Hz</td></tr>
+  </table>
+
+  <p style="font-size:9.5pt">A live dashboard shows the camera feed with AI detections (click to lock a
+  target), the correction being streamed, and all three attitude readouts — FCC, gimbal, and the
+  <b class="k">camera-vs-nose</b> difference explained next.</p>
+
+  <div class="footer"><span>AI Aided Vision-to-FCC Error GPS Dive Correction Prototype · July 2026</span><span>1 / 4</span></div>
+</div>
+
+<!-- ================================================== PAGE 2 -->
+<div class="page">
+  <h2 style="margin-top:0"><span class="num">2</span> Two devices, two reference frames — and how they are reconciled</h2>
+
+  <p>The gimbal is bolted to the airframe just below the FCC, and at power-up both face the same
+  way. It is tempting to conclude their angles should match — <b class="k">they should not.</b> The mount
+  only fixes the gimbal's <i>base</i>; the camera rides on three motorized axes and moves away from
+  the nose the moment it tracks. And even when both physically point the same way, they <i>report</i>
+  their orientation against different references:</p>
+
+  <table>
+    <tr><th style="width:16mm">Angle</th><th>FCC (MAVLink <code>ATTITUDE</code>)</th><th>Gimbal (SIYI, follow mode)</th></tr>
+    <tr><td><b>yaw</b></td><td><b>compass heading</b> — measured from North</td><td><b>measured from the UAV nose</b> (left/right of it)</td></tr>
+    <tr><td>pitch</td><td>up/down from the horizon</td><td>up/down from the horizon (its own IMU)</td></tr>
+    <tr><td>roll</td><td>tilt from level</td><td>tilt from level (its own IMU)</td></tr>
+  </table>
+
+  <p>So FCC yaw <b>+109°</b> next to gimbal yaw <b>−28°</b> is not a contradiction: one says
+  <i>&ldquo;the aircraft heads east-southeast&rdquo;</i>, the other says <i>&ldquo;the camera looks 28° left of the
+  nose&rdquo;</i>. They answer different questions and can never be compared or subtracted directly.
+  What both devices <b class="k">do share is the earth</b>: each has an IMU referenced to gravity (a common
+  horizon) and yaw can be composed onto a common heading. The earth is the bridge frame:</p>
+
+  <div class="fig">
+  <svg width="680" height="235" viewBox="0 0 680 235" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="an" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#26333b"/></marker>
+      <marker id="ab" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#136b78"/></marker>
+      <marker id="ao" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#d97706"/></marker>
+      <marker id="aw" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#2f9e63"/></marker>
+    </defs>
+    <!-- compass -->
+    <circle cx="130" cy="122" r="88" fill="#f4f9fa" stroke="#cfe0e2" stroke-width="1.5"/>
+    <line x1="130" y1="122" x2="130" y2="30" stroke="#26333b" stroke-width="1.8" marker-end="url(#an)"/>
+    <text x="130" y="22" font-size="11" font-weight="bold" fill="#26333b" text-anchor="middle">N</text>
+    <!-- nose direction 109deg -->
+    <line x1="130" y1="122" x2="205.6" y2="148.1" stroke="#136b78" stroke-width="2.4" marker-end="url(#ab)"/>
+    <text x="222" y="163" font-size="9" font-weight="bold" fill="#136b78">UAV nose</text>
+    <!-- camera direction 81deg -->
+    <line x1="130" y1="122" x2="209" y2="109.5" stroke="#d97706" stroke-width="2.4" stroke-dasharray="6,4" marker-end="url(#ao)"/>
+    <text x="220" y="103" font-size="9" font-weight="bold" fill="#d97706">camera line of sight</text>
+    <!-- fcc yaw arc: 0 -> 109 deg, r=45 -->
+    <path d="M 130 77 A 45 45 0 0 1 172.6 136.7" fill="none" stroke="#136b78" stroke-width="1.6" marker-end="url(#ab)"/>
+    <text x="184" y="76" font-size="8.6" fill="#136b78">FCC yaw +109°</text>
+    <text x="184" y="87" font-size="8.6" fill="#136b78">(from North)</text>
+    <!-- gimbal yaw arc: 109 -> 81 deg, r=66 -->
+    <path d="M 192.4 143.5 A 66 66 0 0 0 195.2 111.7" fill="none" stroke="#d97706" stroke-width="1.6" marker-end="url(#ao)"/>
+    <text x="253" y="130" font-size="8.6" fill="#d97706">gimbal yaw −28°</text>
+    <text x="253" y="141" font-size="8.6" fill="#d97706">(from the nose)</text>
+    <text x="130" y="228" font-size="8.6" fill="#5b6b73" text-anchor="middle">top-down view · live bench values</text>
+    <!-- reconciliation flow -->
+    <rect x="392" y="26" width="272" height="52" rx="6" fill="#fff" stroke="#136b78" stroke-width="1.4"/>
+    <text x="404" y="43" font-size="9" font-weight="bold" fill="#0d4f5c">1 · Express BOTH in the earth frame</text>
+    <text x="404" y="56" font-size="8.4" fill="#26333b">aircraft: heading 109.4°, pitch 0.3°, roll 0.7° (FCC)</text>
+    <text x="404" y="68" font-size="8.4" fill="#26333b">camera: heading 109.4° + (−28.4°), pitch 23.3° (gimbal IMU)</text>
+    <line x1="528" y1="78" x2="528" y2="94" stroke="#2f9e63" stroke-width="1.6" marker-end="url(#aw)"/>
+    <rect x="392" y="96" width="272" height="38" rx="6" fill="#fff" stroke="#136b78" stroke-width="1.4"/>
+    <text x="404" y="113" font-size="9" font-weight="bold" fill="#0d4f5c">2 · Subtract the aircraft's rotation</text>
+    <text x="404" y="126" font-size="8.4" fill="#26333b">camera_vs_nose = (world→body)ᵀ × (world→camera)</text>
+    <line x1="528" y1="134" x2="528" y2="150" stroke="#2f9e63" stroke-width="1.6" marker-end="url(#aw)"/>
+    <rect x="392" y="152" width="272" height="52" rx="6" fill="#0d4f5c"/>
+    <text x="404" y="169" font-size="9" font-weight="bold" fill="#fff">3 · CAMERA VS NOSE — one common frame</text>
+    <text x="404" y="182" font-size="8.4" fill="#d9eef0">pitch +22.7°, yaw −28.6°, roll −0.5°</text>
+    <text x="404" y="195" font-size="8.4" fill="#9fd4d6">the compass heading cancels out exactly</text>
+  </svg>
+  </div>
+  <div class="figcap">Fig. 2 — Frame reconciliation (<code>mount_relative_euler()</code>). Both attitudes are expressed
+  as 3-D rotations in the shared earth frame, then the aircraft's rotation is subtracted; the heading appears in
+  both terms and cancels, leaving pure &ldquo;where does the camera point relative to the nose&rdquo;.</div>
+
+  <p><b class="k">The camera never &ldquo;corrects the FCC's angles&rdquo;.</b> It never touches the FCC's attitude at
+  all. The reconciliation happens on the companion computer <i>before</i> anything is transmitted, so
+  what reaches the FCC — <i>&ldquo;target is 27° left of your nose, 22° above it&rdquo;</i> — is already in the
+  aircraft's own body frame, the only frame the FCC thinks in. There is no frame conflict on the wire.</p>
+
+  <div class="callout green"><b>Verified on the bench (live hardware, July 7):</b> with the gimbal centered and both
+  devices aligned, CAMERA VS NOSE reads <b>−0.15° / −1.30° / −0.68° ≈ 0</b> — the boresight check.
+  The same geometry evaluated at two different compass headings gives identical output (heading provably
+  cancels), and every dashboard value reproduces through the math to the decimal.</div>
+
+  <div class="callout"><b>The &ldquo;phantom roll&rdquo;:</b> that −0.68° roll mirrors the aircraft's own +0.69° roll. The
+  gimbal levels the camera against the <i>earth</i>, so seen from a slightly rolled airframe the level camera
+  appears counter-rolled. Real geometry, not an error — and visible live on the dashboard.</div>
+
+  <div class="footer"><span>AI Aided Vision-to-FCC Error GPS Dive Correction Prototype · July 2026</span><span>2 / 4</span></div>
+</div>
+
+<!-- ================================================== PAGE 3 -->
+<div class="page">
+  <h2 style="margin-top:0"><span class="num">3</span> From a pixel in the image to a correction off the nose</h2>
+
+  <p>The AI tracker sees the target in the picture, but the camera deliberately points away from
+  where the aircraft points. A target &ldquo;5° right&rdquo; <i>in the image</i> is therefore not 5° right
+  <i>of the nose</i>. Four steps, all in <code>fcc_landing_feedback.py</code>, convert one into the other:</p>
+
+  <ol class="steps">
+    <li><b class="k">Measure the pixel error.</b> The locked target's box center minus the image center
+        gives an offset in pixels (<code>VisionOffset</code>) — e.g. <i>+776 px right, 69 px up</i>.</li>
+    <li><b class="k">Pixels → camera angles</b> — <code>offset_to_angles()</code>. The lens spreads a known
+        field of view (65° × 39°) across the frame, so
+        <code>angle = atan(pixels / focal_px)</code> with <code>focal_px = (width/2) / tan(FOV/2)</code>.
+        The tan/atan pair keeps the angle exact even at the frame edges: +776 px → <b>+27.25°</b>
+        off the lens centerline.</li>
+    <li><b class="k">Find the camera-vs-nose rotation</b> — <code>mount_relative_euler()</code>, the frame
+        reconciliation of Section 2, computed fresh from live gimbal + FCC attitude on every cycle.</li>
+    <li><b class="k">Rotate into the aircraft's frame</b> — <code>body_frame_angles()</code>. The target's
+        direction is built as a 3-D ray from step 2, rotated by the camera-vs-nose rotation from step 3,
+        and read out as <b>yaw error</b> (deg right of the nose) and <b>pitch error</b> (deg above it).
+        This pair is streamed as <code>DEBUG_VECT "VIS_ERR"</code>.</li>
+  </ol>
+
+  <div class="fig">
+  <svg width="680" height="160" viewBox="0 0 680 160" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="pb" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#136b78"/></marker>
+      <marker id="po" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#d97706"/></marker>
+    </defs>
+    <!-- attitude inputs -->
+    <rect x="252" y="14" width="128" height="26" rx="5" fill="#fdf6ec" stroke="#d97706" stroke-width="1.4"/>
+    <text x="316" y="31" font-size="8.6" font-weight="bold" fill="#8a4b04" text-anchor="middle">ZR10 gimbal attitude</text>
+    <rect x="396" y="14" width="100" height="26" rx="5" fill="#fdf6ec" stroke="#d97706" stroke-width="1.4"/>
+    <text x="446" y="31" font-size="8.6" font-weight="bold" fill="#8a4b04" text-anchor="middle">FCC attitude</text>
+    <line x1="360" y1="40" x2="400" y2="74" stroke="#d97706" stroke-width="1.5" marker-end="url(#po)"/>
+    <line x1="440" y1="40" x2="418" y2="74" stroke="#d97706" stroke-width="1.5" marker-end="url(#po)"/>
+    <text x="540" y="56" font-size="8.4" fill="#8a4b04">mount_relative_euler()</text>
+    <text x="540" y="67" font-size="8.4" fill="#8a4b04">= Section 2 reconciliation</text>
+    <!-- pipeline boxes -->
+    <rect x="10" y="76" width="128" height="52" rx="6" fill="#fff" stroke="#136b78" stroke-width="1.5"/>
+    <text x="74" y="96" font-size="9.2" font-weight="bold" fill="#0d4f5c" text-anchor="middle">pixel offset</text>
+    <text x="74" y="110" font-size="8.2" fill="#5b6b73" text-anchor="middle">target vs image center</text>
+    <line x1="138" y1="102" x2="162" y2="102" stroke="#136b78" stroke-width="1.6" marker-end="url(#pb)"/>
+    <rect x="164" y="76" width="146" height="52" rx="6" fill="#fff" stroke="#136b78" stroke-width="1.5"/>
+    <text x="237" y="94" font-size="9" font-weight="bold" fill="#0d4f5c" text-anchor="middle">offset_to_angles()</text>
+    <text x="237" y="107" font-size="8.2" fill="#5b6b73" text-anchor="middle">deg off lens centerline</text>
+    <text x="237" y="119" font-size="8.2" fill="#5b6b73" text-anchor="middle">(camera frame)</text>
+    <line x1="310" y1="102" x2="334" y2="102" stroke="#136b78" stroke-width="1.6" marker-end="url(#pb)"/>
+    <rect x="336" y="76" width="152" height="52" rx="6" fill="#fff" stroke="#136b78" stroke-width="1.5"/>
+    <text x="412" y="94" font-size="9" font-weight="bold" fill="#0d4f5c" text-anchor="middle">body_frame_angles()</text>
+    <text x="412" y="107" font-size="8.2" fill="#5b6b73" text-anchor="middle">rotate ray into airframe</text>
+    <text x="412" y="119" font-size="8.2" fill="#5b6b73" text-anchor="middle">yaw / pitch off the nose</text>
+    <line x1="488" y1="102" x2="512" y2="102" stroke="#136b78" stroke-width="1.6" marker-end="url(#pb)"/>
+    <rect x="514" y="76" width="156" height="52" rx="6" fill="#0d4f5c"/>
+    <text x="592" y="94" font-size="9" font-weight="bold" fill="#fff" text-anchor="middle">DEBUG_VECT "VIS_ERR"</text>
+    <text x="592" y="107" font-size="8.2" fill="#9fd4d6" text-anchor="middle">x = yaw error (+ right)</text>
+    <text x="592" y="119" font-size="8.2" fill="#9fd4d6" text-anchor="middle">y = pitch error (+ up)</text>
+  </svg>
+  </div>
+  <div class="figcap">Fig. 3 — The error pipeline. The two attitude sources (amber) are what make the conversion
+  from &ldquo;in the image&rdquo; to &ldquo;off the nose&rdquo; possible.</div>
+
+  <div class="callout teal"><b>Why not just add the angles?</b> Yaw measured by a tilted camera is not the same
+  axis as yaw at the nose, so the code multiplies rotation matrices instead of adding degrees. Live bench proof
+  (July 7, camera pitched 15.5° and yawed 12.4° while tracking):
+  <table style="margin:1.6mm 0 0">
+    <tr><th></th><th>naive flat sum</th><th>actual (matrices — what was sent)</th></tr>
+    <tr><td><b>yaw</b></td><td>12.2° + 27.2° = <b>+39.5°</b></td><td><b>+40.6°</b></td></tr>
+    <tr><td><b>pitch</b></td><td>15.6° + 2.6° = <b>+18.2°</b></td><td><b>+15.8°</b></td></tr>
+  </table>
+  Already 1–2.4° of difference at bench angles. In a steep dive it grows to many degrees: a target 5° right
+  in the image at 60° of camera down-tilt is really about <b>10°</b> right of the nose — naive addition would
+  under-steer by half.</div>
+
+  <div class="footer"><span>AI Aided Vision-to-FCC Error GPS Dive Correction Prototype · July 2026</span><span>3 / 4</span></div>
+</div>
+
+<!-- ================================================== PAGE 4 -->
+<div class="page">
+  <h2 style="margin-top:0"><span class="num">4</span> How the correction aids the GPS dive</h2>
+
+  <p>The GPS dive gets the aircraft to the right place; the vision correction fixes the last part GPS
+  cannot see. The guidance idea is the one your eyes use on a football: <b class="k">keep the nose pointed
+  at the target and keep flying — the path collapses onto it.</b> The two numbers in
+  <code>VIS_ERR</code> are exactly that steering instruction, at every instant of the dive:</p>
+  <p style="text-align:center; font-size:9.6pt"><b>yaw +3°</b> → steer 3° right &nbsp;·&nbsp; <b>pitch −2°</b> → push 2° down &nbsp;·&nbsp; <b>both ≈ 0</b> → nose on target, hold the dive</p>
+
+  <div class="fig">
+  <svg width="680" height="205" viewBox="0 0 680 205" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="dg" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#2f9e63"/></marker>
+    </defs>
+    <!-- ground -->
+    <rect x="0" y="182" width="680" height="8" fill="#d8e2e5"/>
+    <!-- target -->
+    <circle cx="600" cy="172" r="13" fill="none" stroke="#d97706" stroke-width="2.4"/>
+    <circle cx="600" cy="172" r="6" fill="none" stroke="#d97706" stroke-width="1.8"/>
+    <circle cx="600" cy="172" r="2" fill="#d97706"/>
+    <text x="600" y="201" font-size="9.5" font-weight="bold" fill="#26333b" text-anchor="middle">TARGET</text>
+    <!-- gps only path (misses, flies past the target) -->
+    <path d="M 60 38 L 678 150" fill="none" stroke="#8fa2ab" stroke-width="1.8" stroke-dasharray="7,5"/>
+    <text x="440" y="97" font-size="8.6" fill="#5b6b73">GPS-only dive: drifts past the target</text>
+    <!-- corrected path -->
+    <path d="M 60 38 C 230 95, 420 130, 588 162" fill="none" stroke="#2f9e63" stroke-width="2.6" marker-end="url(#dg)"/>
+    <text x="185" y="140" font-size="8.8" font-weight="bold" fill="#1d6b42">vision-corrected dive: errors driven to zero</text>
+    <!-- aircraft -->
+    <path d="M 48 30 l 24 9 l -21 6 z" fill="#0d4f5c"/>
+    <text x="42" y="24" font-size="8.8" fill="#26333b">dive entry (any angle 0–90°)</text>
+    <!-- error ticks -->
+    <line x1="170" y1="68" x2="192" y2="50" stroke="#d97706" stroke-width="1.4"/>
+    <text x="198" y="48" font-size="8.2" fill="#d97706">large error → strong correction</text>
+    <line x1="430" y1="132" x2="446" y2="118" stroke="#d97706" stroke-width="1.2"/>
+    <text x="452" y="117" font-size="8.2" fill="#d97706">error shrinking</text>
+  </svg>
+  </div>
+  <div class="figcap">Fig. 4 — Pursuit by error-nulling. Each correction turns the velocity vector a little more onto
+  the target; as the errors shrink the flight path and the line of sight merge. Because the error is measured
+  <b>off the nose</b> — not off the vertical — the same math serves a shallow 20° dive and a near-vertical 85° one.</div>
+
+  <div class="callout green"><b>Demonstration scope.</b> In this build the corrections are <i>reported, not acted
+  on</i>: <code>VIS_ERR</code> is passive telemetry any ground station can plot live. That is the point of the
+  prototype — proving the camera produces a valid, GPS-independent steering signal. Closing the loop is one
+  step: an FCC-side consumer (Lua script or companion commander) reads the same two numbers as rate commands.</div>
+
+  <div class="callout"><b>Honest limitations.</b> A twisted gimbal mount biases the correction one-to-one — caught
+  on the bench by centering the gimbal and confirming CAMERA VS NOSE ≈ 0 (the dashboard makes this a 10-second
+  check). The gimbal's IMU and the FCC's IMU estimate &ldquo;level&rdquo; independently; a fraction-of-a-degree
+  disagreement passes into the correction. Compass error, notably, <b>cannot</b> corrupt the output — the heading
+  cancels in the math.</div>
+
+  <h2><span class="num">5</span> Code map</h2>
+  <table>
+    <tr><th style="width:44mm">File</th><th>Role in one line</th></tr>
+    <tr><td><code>gui_dashboard.py</code></td><td>Runs everything: five worker threads (video, AI detection, gimbal poll, gimbal steering, FCC/MAVLink) plus the dashboard render loop.</td></tr>
+    <tr><td><code>fcc_landing_feedback.py</code></td><td>The error mathematics: <code>offset_to_angles()</code>, <code>mount_relative_euler()</code>, <code>body_frame_angles()</code>.</td></tr>
+    <tr><td><code>head_tracker.py</code></td><td>YuNet CNN detection (the &ldquo;AI&rdquo; of the title), click-to-lock matching, and the PID that steers the gimbal.</td></tr>
+    <tr><td><code>siyi_zr10.py</code></td><td>Minimal SIYI SDK client: gimbal attitude, centering, rate steering over UDP.</td></tr>
+    <tr><td><code>system_math.md</code></td><td>Plain-language walkthrough of Sections 2–3 with live bench numbers.</td></tr>
+  </table>
+
+  <div class="footer"><span>AI Aided Vision-to-FCC Error GPS Dive Correction Prototype · July 2026</span><span>4 / 4</span></div>
+</div>
+
+</body>
+</html>
