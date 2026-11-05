@@ -1,4 +1,4 @@
-# MINI UMWAMBI — Vision-to-FCC Error Correction
+# Vision-to-FCC Error Correction
 
 A companion-computer prototype that turns **what a gimbal camera sees** into **steering-error angles a flight controller can understand**.
 
